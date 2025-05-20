@@ -194,3 +194,37 @@
     (ok true)
   )
 )
+
+;; Read-only Interface Functions
+
+(define-read-only (get-stake-info (staker principal))
+  (map-get? stakes { staker: staker })
+)
+
+(define-read-only (get-rewards-claimed (staker principal))
+  (map-get? rewards-claimed { staker: staker })
+)
+
+(define-read-only (get-reward-rate)
+  (var-get reward-rate)
+)
+
+(define-read-only (get-min-stake-period)
+  (var-get min-stake-period)
+)
+
+(define-read-only (get-reward-pool)
+  (var-get reward-pool)
+)
+
+(define-read-only (get-total-staked)
+  (var-get total-staked)
+)
+
+;; Calculate APY for the current reward rate
+(define-read-only (get-current-apy)
+  (let ((rate-basis (var-get reward-rate)))
+    (* rate-basis u100)
+    ;; convert basis points to percentage (e.g., 5 basis points = 0.5%)
+  )
+)
