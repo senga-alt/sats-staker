@@ -132,3 +132,65 @@
     u0
   )
 )
+
+;; Claim rewards without unstaking
+(define-public (claim-rewards)
+  (let (
+      (stake-info (unwrap! (map-get? stakes { staker: tx-sender }) ERR_NO_STAKE_FOUND))
+      (reward-amount (calculate-rewards tx-sender))
+    )
+    (asserts! (> reward-amount u0) ERR_NO_STAKE_FOUND)
+    (asserts! (<= reward-amount (var-get reward-pool)) ERR_NOT_ENOUGH_REWARDS)
+    ;; Update rewards pool - reward-amount has been validated above
+    (var-set reward-pool (- (var-get reward-pool) reward-amount))
+    ;; Update rewards claimed
+    (match (map-get? rewards-claimed { staker: tx-sender })
+      prev-claimed (map-set rewards-claimed { staker: tx-sender } { amount: (+ reward-amount (get amount prev-claimed)) })
+      (map-set rewards-claimed { staker: tx-sender } { amount: reward-amount })
+    )
+    ;; Reset stake time to current block to restart reward calculation
+    (map-set stakes { staker: tx-sender } {
+      amount: (get amount stake-info),
+      staked-at: stacks-block-height,
+    })
+    ;; Transfer rewards to the staker
+    (as-contract (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+      transfer reward-amount (as-contract tx-sender) tx-sender none
+    )))
+    (ok true)
+  )
+)
+
+;; Unstake tokens and claim rewards
+(define-public (unstake (amount uint))
+  (let (
+      (stake-info (unwrap! (map-get? stakes { staker: tx-sender }) ERR_NO_STAKE_FOUND))
+      (staked-amount (get amount stake-info))
+      (staked-at (get staked-at stake-info))
+      (stake-duration (- stacks-block-height staked-at))
+    )
+    ;; Check conditions and validate amount
+    (asserts! (> amount u0) ERR_ZERO_STAKE)
+    (asserts! (>= staked-amount amount) ERR_NO_STAKE_FOUND)
+    (asserts! (>= stake-duration (var-get min-stake-period))
+      ERR_TOO_EARLY_TO_UNSTAKE
+    )
+    ;; Claim rewards first if available
+    (try! (claim-rewards))
+    ;; Update stake record
+    (if (> staked-amount amount)
+      (map-set stakes { staker: tx-sender } {
+        amount: (- staked-amount amount),
+        staked-at: stacks-block-height,
+      })
+      (map-delete stakes { staker: tx-sender })
+    )
+    ;; Update total staked - amount has been validated above
+    (var-set total-staked (- (var-get total-staked) amount))
+    ;; Transfer tokens back to the staker
+    (as-contract (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+      transfer amount (as-contract tx-sender) tx-sender none
+    )))
+    (ok true)
+  )
+)
