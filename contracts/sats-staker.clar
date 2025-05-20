@@ -89,3 +89,46 @@
     (ok true)
   )
 )
+
+;; Staking Core Functions
+
+(define-public (stake (amount uint))
+  (begin
+    (asserts! (> amount u0) ERR_ZERO_STAKE)
+    ;; Transfer sBTC from user to the contract
+    (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+      transfer amount tx-sender (as-contract tx-sender) none
+    ))
+    ;; Update or create stake record
+    (match (map-get? stakes { staker: tx-sender })
+      prev-stake (map-set stakes { staker: tx-sender } {
+        amount: (+ amount (get amount prev-stake)),
+        staked-at: stacks-block-height,
+      })
+      (map-set stakes { staker: tx-sender } {
+        amount: amount,
+        staked-at: stacks-block-height,
+      })
+    )
+    ;; Update total staked - amount has been validated above
+    (var-set total-staked (+ (var-get total-staked) amount))
+    (ok true)
+  )
+)
+
+;; Calculate rewards for a staker
+(define-read-only (calculate-rewards (staker principal))
+  (match (map-get? stakes { staker: staker })
+    stake-info (let (
+        (stake-amount (get amount stake-info))
+        (stake-duration (- stacks-block-height (get staked-at stake-info)))
+        (reward-basis (/ (* stake-amount (var-get reward-rate)) u1000))
+        (blocks-per-year u52560) ;; ~365 days on Stacks
+        (time-factor (/ (* stake-duration u10000) blocks-per-year))
+        (reward (* reward-basis (/ time-factor u10000)))
+      )
+      reward
+    )
+    u0
+  )
+)
