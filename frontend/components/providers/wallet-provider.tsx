@@ -1,14 +1,11 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { connect, disconnect, isConnected, request } from '@stacks/connect';
-import { useToast } from '@/components/ui/use-toast';
-import { ToastAction } from '@/components/ui/toast';
+import { AppConfig, UserSession, showConnect } from '@stacks/connect';
+import { useToast } from '@/hooks/use-toast';
 
-// Define our own interface based on the actual response structure
-interface AddressResponse {
-  addresses: Array<{ address: string }>;
-}
+const appConfig = new AppConfig(['store_write', 'publish_data']);
+const userSession = new UserSession({ appConfig });
 
 interface WalletContextType {
   address: string | null;
@@ -16,6 +13,7 @@ interface WalletContextType {
   connectWallet: () => Promise<void>;
   disconnectWallet: () => void;
   isWalletConnected: boolean;
+  userSession: UserSession;
 }
 
 const WalletContext = createContext<WalletContextType>({
@@ -24,6 +22,7 @@ const WalletContext = createContext<WalletContextType>({
   connectWallet: async () => {},
   disconnectWallet: () => {},
   isWalletConnected: false,
+  userSession,
 });
 
 export const useWallet = () => useContext(WalletContext);
@@ -36,19 +35,16 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     const checkConnection = async () => {
-      if (isConnected()) {
+      if (userSession.isSignInPending()) {
         try {
-          // Type assertion with a more generic type
-          const response = await request('stx_getAddresses') as AddressResponse;
-          const stacksAddress = response.addresses.find(
-            (addr) => addr.address && addr.address.startsWith('SP')
-          );
-          if (stacksAddress) {
-            setAddress(stacksAddress.address);
-          }
+          const userData = await userSession.handlePendingSignIn();
+          setAddress(userData.profile.stxAddress.testnet);
         } catch (error) {
-          console.error('Error getting addresses:', error);
+          console.error('Error handling pending sign in:', error);
         }
+      } else if (userSession.isUserSignedIn()) {
+        const userData = userSession.loadUserData();
+        setAddress(userData.profile.stxAddress.testnet);
       }
       setInitialized(true);
     };
@@ -59,36 +55,39 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
   const connectWallet = async () => {
     setConnecting(true);
     try {
-      // Type assertion with a more generic type
-      const response = await connect({ forceWalletSelect: true }) as AddressResponse;
-      
-      if (response && response.addresses) {
-        // Fix: Access the first address that starts with 'SP' (Stacks address)
-        const stacksAddress = response.addresses.find(
-          (addr) => addr.address && addr.address.startsWith('SP')
-        );
-        
-        if (stacksAddress) {
-          setAddress(stacksAddress.address);
+      showConnect({
+        appDetails: {
+          name: 'SatsStaker',
+          icon: '/favicon.ico',
+        },
+        redirectTo: '/',
+        onFinish: () => {
+          const userData = userSession.loadUserData();
+          setAddress(userData.profile.stxAddress.testnet);
           toast({
             title: "Wallet Connected",
-            description: `Connected to ${stacksAddress.address.slice(0, 6)}...${stacksAddress.address.slice(-4)}`,
+            description: `Connected to ${userData.profile.stxAddress.testnet.slice(0, 6)}...${userData.profile.stxAddress.testnet.slice(-4)}`,
           });
-        }
-      }
+          setConnecting(false);
+        },
+        onCancel: () => {
+          setConnecting(false);
+        },
+        userSession,
+      });
     } catch (error) {
       console.error('Error connecting wallet:', error);
       toast({
         title: "Connection Failed",
         description: "Could not connect to your wallet. Please try again.",
+        variant: "destructive",
       });
-    } finally {
       setConnecting(false);
     }
   };
 
   const disconnectWallet = () => {
-    disconnect();
+    userSession.signUserOut();
     setAddress(null);
     toast({
       title: "Wallet Disconnected",
@@ -106,6 +105,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
         connectWallet,
         disconnectWallet,
         isWalletConnected,
+        userSession,
       }}
     >
       {initialized ? children : <div className="min-h-screen flex items-center justify-center">

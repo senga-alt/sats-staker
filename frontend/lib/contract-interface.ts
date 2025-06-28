@@ -9,8 +9,14 @@ import {
   makeContractCall,
   AnchorMode,
   broadcastTransaction,
+  PostConditionMode,
+  createSTXPostCondition,
+  FungibleConditionCode,
+  createAssetInfo,
+  createFungiblePostCondition,
 } from "@stacks/transactions";
-import { STACKS_TESTNET } from "@stacks/network";
+import { STACKS_TESTNET, STACKS_MAINNET } from "@stacks/network";
+import { openContractCall } from "@stacks/connect";
 
 // Contract info
 const contractAddress = "ST2VXPMB7WBJRS0HPJENJD7FR35907JV4X1E64DGN";
@@ -36,7 +42,7 @@ export const UserContractInterface = {
       });
       
       const response = cvToValue(result);
-      if (!response) return null;
+      if (!response || response.type === 'none') return null;
       
       return {
         amount: response.value.amount.value,
@@ -60,7 +66,7 @@ export const UserContractInterface = {
       });
       
       const response = cvToValue(result);
-      return response.value;
+      return response.value || 0;
     } catch (error) {
       console.error("Error calculating rewards:", error);
       return 0;
@@ -79,7 +85,7 @@ export const UserContractInterface = {
       });
       
       const response = cvToValue(result);
-      return response.value;
+      return response.value || 5;
     } catch (error) {
       console.error("Error getting reward rate:", error);
       return 5; // Default reward rate (0.5%)
@@ -98,7 +104,7 @@ export const UserContractInterface = {
       });
       
       const response = cvToValue(result);
-      return response.value;
+      return response.value || 1440;
     } catch (error) {
       console.error("Error getting min stake period:", error);
       return 1440; // Default min stake period
@@ -117,9 +123,28 @@ export const UserContractInterface = {
       });
       
       const response = cvToValue(result);
-      return response.value;
+      return response.value || 0;
     } catch (error) {
       console.error("Error getting total staked:", error);
+      return 0;
+    }
+  },
+  
+  async getRewardPool() {
+    try {
+      const result = await fetchCallReadOnlyFunction({
+        contractAddress,
+        contractName,
+        functionName: "get-reward-pool",
+        functionArgs: [],
+        network,
+        senderAddress: contractAddress,
+      });
+      
+      const response = cvToValue(result);
+      return response.value || 0;
+    } catch (error) {
+      console.error("Error getting reward pool:", error);
       return 0;
     }
   },
@@ -136,7 +161,7 @@ export const UserContractInterface = {
       });
       
       const response = cvToValue(result);
-      return response.value;
+      return response.value || 0;
     } catch (error) {
       console.error("Error getting sBTC balance:", error);
       return 0;
@@ -147,21 +172,35 @@ export const UserContractInterface = {
   
   async stake(userAddress: string, amountMicroStx: number) {
     try {
+      const sbtcAssetInfo = createAssetInfo(sbtcContractAddress, sbtcContractName);
+      
+      const postConditions = [
+        createFungiblePostCondition(
+          userAddress,
+          FungibleConditionCode.Equal,
+          amountMicroStx,
+          sbtcAssetInfo
+        ),
+      ];
+
       const txOptions = {
         contractAddress,
         contractName,
         functionName: "stake",
         functionArgs: [uintCV(amountMicroStx)],
-        senderAddress: userAddress,
         network,
         anchorMode: AnchorMode.Any,
+        postConditionMode: PostConditionMode.Deny,
+        postConditions,
+        onFinish: (data: any) => {
+          console.log("Stake transaction completed:", data);
+        },
+        onCancel: () => {
+          console.log("Stake transaction cancelled");
+        },
       };
       
-      // In a real app, we would use @stacks/connect here to prompt the user to sign
-      // For this example, we'll just log the transaction options
-      console.log("Stake transaction options:", txOptions);
-      
-      // Mock a successful transaction result
+      await openContractCall(txOptions);
       return { success: true };
     } catch (error) {
       console.error("Error staking sBTC:", error);
@@ -171,20 +210,35 @@ export const UserContractInterface = {
   
   async unstake(userAddress: string, amountMicroStx: number) {
     try {
+      const sbtcAssetInfo = createAssetInfo(sbtcContractAddress, sbtcContractName);
+      
+      const postConditions = [
+        createFungiblePostCondition(
+          `${contractAddress}.${contractName}`,
+          FungibleConditionCode.Equal,
+          amountMicroStx,
+          sbtcAssetInfo
+        ),
+      ];
+
       const txOptions = {
         contractAddress,
         contractName,
         functionName: "unstake",
         functionArgs: [uintCV(amountMicroStx)],
-        senderAddress: userAddress,
         network,
         anchorMode: AnchorMode.Any,
+        postConditionMode: PostConditionMode.Deny,
+        postConditions,
+        onFinish: (data: any) => {
+          console.log("Unstake transaction completed:", data);
+        },
+        onCancel: () => {
+          console.log("Unstake transaction cancelled");
+        },
       };
       
-      // In a real app, we would use @stacks/connect here to prompt the user to sign
-      console.log("Unstake transaction options:", txOptions);
-      
-      // Mock a successful transaction result
+      await openContractCall(txOptions);
       return { success: true };
     } catch (error) {
       console.error("Error unstaking sBTC:", error);
@@ -199,15 +253,18 @@ export const UserContractInterface = {
         contractName,
         functionName: "claim-rewards",
         functionArgs: [],
-        senderAddress: userAddress,
         network,
         anchorMode: AnchorMode.Any,
+        postConditionMode: PostConditionMode.Allow,
+        onFinish: (data: any) => {
+          console.log("Claim rewards transaction completed:", data);
+        },
+        onCancel: () => {
+          console.log("Claim rewards transaction cancelled");
+        },
       };
       
-      // In a real app, we would use @stacks/connect here to prompt the user to sign
-      console.log("Claim rewards transaction options:", txOptions);
-      
-      // Mock a successful transaction result
+      await openContractCall(txOptions);
       return { success: true };
     } catch (error) {
       console.error("Error claiming rewards:", error);

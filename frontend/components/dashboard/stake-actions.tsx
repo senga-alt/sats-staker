@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   Card, 
   CardContent, 
@@ -14,11 +14,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowRightLeft, TrendingUp, ArrowDown, AlertCircle } from "lucide-react";
+import { ArrowRightLeft, TrendingUp, ArrowDown, AlertCircle, Coins, ExternalLink } from "lucide-react";
 import { useWallet } from "@/components/providers/wallet-provider";
 import { UserContractInterface } from "@/lib/contract-interface";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from "next/navigation";
+import { formatNumber } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 export function StakeActions() {
   const { address } = useWallet();
@@ -29,34 +31,73 @@ export function StakeActions() {
   const [stakeAmount, setStakeAmount] = useState("");
   const [unstakeAmount, setUnstakeAmount] = useState("");
   const [processing, setProcessing] = useState(false);
-  const [sbtcDeposit, setSbtcDeposit] = useState(false);
+  const [balances, setBalances] = useState({
+    sbtc: 0,
+    staked: 0,
+    rewards: 0,
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchBalances = async () => {
+      if (!address) return;
+      
+      try {
+        setLoading(true);
+        const [sbtcBalance, stakeInfo, rewards] = await Promise.all([
+          UserContractInterface.getSbtcBalance(address),
+          UserContractInterface.getStakeInfo(address),
+          UserContractInterface.calculateRewards(address),
+        ]);
+        
+        setBalances({
+          sbtc: sbtcBalance || 0,
+          staked: stakeInfo?.amount || 0,
+          rewards: rewards || 0,
+        });
+      } catch (error) {
+        console.error("Error fetching balances:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchBalances();
+    
+    // Refresh balances every 30 seconds
+    const interval = setInterval(fetchBalances, 30000);
+    return () => clearInterval(interval);
+  }, [address]);
 
   const handleStake = async () => {
     if (!address) return;
     
     try {
       setProcessing(true);
+      const stakeAmountMicro = Math.floor(parseFloat(stakeAmount) * 100000000);
 
-      // Check if the user has sBTC balance
-      const sbtcBalance = await UserContractInterface.getSbtcBalance(address);
-      const stakeAmountMicro = parseFloat(stakeAmount) * 100000000;
-
-      if (sbtcBalance < stakeAmountMicro) {
-        setSbtcDeposit(true);
+      if (balances.sbtc < stakeAmountMicro) {
+        toast({
+          variant: "destructive",
+          title: "Insufficient Balance",
+          description: "You don't have enough sBTC to stake this amount.",
+        });
         return;
       }
       
-      // Call the contract to stake sBTC
-      const result = await UserContractInterface.stake(address, stakeAmountMicro);
+      await UserContractInterface.stake(address, stakeAmountMicro);
       
       toast({
-        title: "Staking Successful",
-        description: `Successfully staked ${stakeAmount} sBTC!`,
+        title: "Staking Transaction Submitted",
+        description: `Staking ${stakeAmount} sBTC. Please wait for confirmation.`,
       });
       
-      // Clear the input and refresh the page to show updated stakes
       setStakeAmount("");
-      router.refresh();
+      
+      // Refresh balances after a delay
+      setTimeout(() => {
+        router.refresh();
+      }, 3000);
       
     } catch (error) {
       console.error("Error staking sBTC:", error);
@@ -75,24 +116,34 @@ export function StakeActions() {
     
     try {
       setProcessing(true);
+      const unstakeAmountMicro = Math.floor(parseFloat(unstakeAmount) * 100000000);
       
-      // Call the contract to unstake sBTC
-      const unstakeAmountMicro = parseFloat(unstakeAmount) * 100000000;
-      const result = await UserContractInterface.unstake(address, unstakeAmountMicro);
+      if (balances.staked < unstakeAmountMicro) {
+        toast({
+          variant: "destructive",
+          title: "Insufficient Staked Amount",
+          description: "You don't have enough staked sBTC to unstake this amount.",
+        });
+        return;
+      }
+      
+      await UserContractInterface.unstake(address, unstakeAmountMicro);
       
       toast({
-        title: "Unstaking Successful",
-        description: `Successfully unstaked ${unstakeAmount} sBTC!`,
+        title: "Unstaking Transaction Submitted",
+        description: `Unstaking ${unstakeAmount} sBTC. Please wait for confirmation.`,
       });
       
-      // Clear the input and refresh the page to show updated stakes
       setUnstakeAmount("");
-      router.refresh();
+      
+      // Refresh balances after a delay
+      setTimeout(() => {
+        router.refresh();
+      }, 3000);
       
     } catch (error) {
       console.error("Error unstaking sBTC:", error);
       
-      // Check if the error is due to the minimum stake period
       if ((error as any)?.toString().includes("too early to unstake")) {
         toast({
           variant: "destructive",
@@ -117,15 +168,26 @@ export function StakeActions() {
     try {
       setProcessing(true);
       
-      // Call the contract to claim rewards
-      const result = await UserContractInterface.claimRewards(address);
+      if (balances.rewards <= 0) {
+        toast({
+          variant: "destructive",
+          title: "No Rewards Available",
+          description: "You don't have any rewards to claim at this time.",
+        });
+        return;
+      }
+      
+      await UserContractInterface.claimRewards(address);
       
       toast({
-        title: "Rewards Claimed",
-        description: "Successfully claimed your sBTC rewards!",
+        title: "Claim Rewards Transaction Submitted",
+        description: "Claiming your sBTC rewards. Please wait for confirmation.",
       });
       
-      router.refresh();
+      // Refresh balances after a delay
+      setTimeout(() => {
+        router.refresh();
+      }, 3000);
       
     } catch (error) {
       console.error("Error claiming rewards:", error);
@@ -139,9 +201,12 @@ export function StakeActions() {
     }
   };
 
-  const handleSbtcDeposit = () => {
-    setSbtcDeposit(false);
-    setActiveTab("deposit");
+  const setMaxStake = () => {
+    setStakeAmount((balances.sbtc / 100000000).toString());
+  };
+
+  const setMaxUnstake = () => {
+    setUnstakeAmount((balances.staked / 100000000).toString());
   };
 
   return (
@@ -151,6 +216,28 @@ export function StakeActions() {
         <CardDescription>Manage your stakes and rewards</CardDescription>
       </CardHeader>
       <CardContent>
+        {/* Balance Overview */}
+        <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-muted/30 rounded-lg">
+          <div className="text-center">
+            <div className="text-sm text-muted-foreground">sBTC Balance</div>
+            <div className="font-semibold">
+              {loading ? "..." : formatNumber(balances.sbtc / 100000000, 6)}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-sm text-muted-foreground">Staked</div>
+            <div className="font-semibold">
+              {loading ? "..." : formatNumber(balances.staked / 100000000, 6)}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-sm text-muted-foreground">Rewards</div>
+            <div className="font-semibold text-[#F7931A]">
+              {loading ? "..." : formatNumber(balances.rewards / 100000000, 6)}
+            </div>
+          </div>
+        </div>
+
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid grid-cols-3 mb-6">
             <TabsTrigger value="stake">
@@ -163,84 +250,97 @@ export function StakeActions() {
             </TabsTrigger>
             <TabsTrigger value="deposit">
               <ArrowRightLeft className="h-4 w-4 mr-2" />
-              Deposit
+              Get sBTC
             </TabsTrigger>
           </TabsList>
           
           <TabsContent value="stake">
-            {sbtcDeposit && (
-              <Alert className="mb-4 bg-amber-500/10 text-amber-500 border-amber-500/50">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription className="text-sm mt-0">
-                  You don't have enough sBTC balance. Convert your BTC to sBTC first.
-                </AlertDescription>
-              </Alert>
-            )}
-            
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="stake-amount">Amount to Stake (sBTC)</Label>
+                <div className="flex justify-between items-center">
+                  <Label htmlFor="stake-amount">Amount to Stake (sBTC)</Label>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={setMaxStake}
+                    disabled={loading || balances.sbtc <= 0}
+                  >
+                    Max
+                  </Button>
+                </div>
                 <Input
                   id="stake-amount"
                   type="number"
                   placeholder="0.0"
-                  step="0.001"
+                  step="0.00000001"
                   min="0"
                   value={stakeAmount}
                   onChange={(e) => setStakeAmount(e.target.value)}
                 />
+                <div className="text-xs text-muted-foreground">
+                  Available: {formatNumber(balances.sbtc / 100000000, 8)} sBTC
+                </div>
               </div>
               
-              <p className="text-sm text-muted-foreground">
-                Staked sBTC earns yield over time. A minimum staking period applies.
-              </p>
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  Staked sBTC earns yield over time. A minimum staking period of ~10 days applies.
+                </AlertDescription>
+              </Alert>
             </div>
             
             <div className="mt-6">
               <Button 
                 onClick={handleStake} 
-                disabled={!stakeAmount || parseFloat(stakeAmount) <= 0 || processing}
+                disabled={!stakeAmount || parseFloat(stakeAmount) <= 0 || processing || loading}
                 className="w-full bg-[#F7931A] hover:bg-[#E67F00] text-white"
               >
                 {processing ? "Processing..." : "Stake sBTC"}
               </Button>
-              
-              {sbtcDeposit && (
-                <Button 
-                  variant="outline" 
-                  onClick={handleSbtcDeposit}
-                  className="w-full mt-2"
-                >
-                  Get sBTC First
-                </Button>
-              )}
             </div>
           </TabsContent>
           
           <TabsContent value="unstake">
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="unstake-amount">Amount to Unstake (sBTC)</Label>
+                <div className="flex justify-between items-center">
+                  <Label htmlFor="unstake-amount">Amount to Unstake (sBTC)</Label>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={setMaxUnstake}
+                    disabled={loading || balances.staked <= 0}
+                  >
+                    Max
+                  </Button>
+                </div>
                 <Input
                   id="unstake-amount"
                   type="number"
                   placeholder="0.0"
-                  step="0.001"
+                  step="0.00000001"
                   min="0"
                   value={unstakeAmount}
                   onChange={(e) => setUnstakeAmount(e.target.value)}
                 />
+                <div className="text-xs text-muted-foreground">
+                  Staked: {formatNumber(balances.staked / 100000000, 8)} sBTC
+                </div>
               </div>
               
-              <p className="text-sm text-muted-foreground">
-                Unstaking will also claim any available rewards. Minimum staking period must be reached.
-              </p>
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  Unstaking will also claim any available rewards. Minimum staking period must be reached.
+                </AlertDescription>
+              </Alert>
             </div>
             
             <div className="mt-6">
               <Button 
                 onClick={handleUnstake} 
-                disabled={!unstakeAmount || parseFloat(unstakeAmount) <= 0 || processing}
+                disabled={!unstakeAmount || parseFloat(unstakeAmount) <= 0 || processing || loading}
                 className="w-full bg-[#F7931A] hover:bg-[#E67F00] text-white"
               >
                 {processing ? "Processing..." : "Unstake sBTC"}
@@ -250,39 +350,62 @@ export function StakeActions() {
           
           <TabsContent value="deposit">
             <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                To stake Bitcoin, you first need to convert it to sBTC (Stacks Bitcoin).
-              </p>
-              
               <Alert className="bg-blue-500/10 text-blue-500 border-blue-500/50">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription className="text-sm mt-0">
-                  Follow the step-by-step process to deposit BTC and receive sBTC that can be staked.
+                <Coins className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  To stake Bitcoin, you first need to convert it to sBTC (Stacks Bitcoin) using the official bridge.
                 </AlertDescription>
               </Alert>
+              
+              <div className="space-y-3">
+                <h4 className="font-medium">How to get sBTC:</h4>
+                <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
+                  <li>Visit the official sBTC bridge</li>
+                  <li>Connect your Bitcoin wallet</li>
+                  <li>Deposit Bitcoin to receive sBTC</li>
+                  <li>Return here to stake your sBTC</li>
+                </ol>
+              </div>
             </div>
             
-            <div className="mt-6">
+            <div className="mt-6 space-y-3">
               <Button 
                 className="w-full"
                 onClick={() => window.open("https://bridge.sbtc.tech", "_blank")}
               >
+                <ExternalLink className="h-4 w-4 mr-2" />
                 Go to sBTC Bridge
+              </Button>
+              
+              <Button 
+                variant="outline"
+                className="w-full"
+                onClick={() => window.open("https://docs.stacks.co/sbtc", "_blank")}
+              >
+                Learn More About sBTC
               </Button>
             </div>
           </TabsContent>
         </Tabs>
       </CardContent>
-      <CardFooter className="border-t pt-6 flex flex-col">
+      
+      <CardFooter className="border-t pt-6 flex flex-col space-y-3">
         <Button 
           variant="outline" 
           className="w-full"
           onClick={handleClaimRewards}
-          disabled={processing}
+          disabled={processing || loading || balances.rewards <= 0}
         >
-          {processing ? "Processing..." : "Claim Available Rewards"}
+          {processing ? "Processing..." : `Claim ${formatNumber(balances.rewards / 100000000, 6)} sBTC Rewards`}
         </Button>
-        <p className="text-xs text-muted-foreground mt-2 text-center">
+        
+        {balances.rewards > 0 && (
+          <Badge variant="secondary" className="text-xs">
+            ~${formatNumber((balances.rewards / 100000000) * 45000, 2)} USD value
+          </Badge>
+        )}
+        
+        <p className="text-xs text-muted-foreground text-center">
           Claiming rewards does not affect your staked sBTC amount
         </p>
       </CardFooter>
