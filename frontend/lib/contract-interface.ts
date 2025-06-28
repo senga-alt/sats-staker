@@ -1,274 +1,63 @@
 "use client";
 
-import {
-  fetchCallReadOnlyFunction,
-  contractPrincipalCV,
-  cvToValue,
-  uintCV,
-  standardPrincipalCV,
-  makeContractCall,
-  AnchorMode,
-  broadcastTransaction,
-  PostConditionMode,
-  createSTXPostCondition,
-  FungibleConditionCode,
-  createAssetInfo,
-  createFungiblePostCondition,
-} from "@stacks/transactions";
-import { STACKS_TESTNET, STACKS_MAINNET } from "@stacks/network";
-import { openContractCall } from "@stacks/connect";
-
-// Contract info
-const contractAddress = "ST2VXPMB7WBJRS0HPJENJD7FR35907JV4X1E64DGN";
-const contractName = "sats-staker";
-const sbtcContractAddress = "ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT";
-const sbtcContractName = "sbtc-token";
-
-// Network - using testnet for now
-const network = STACKS_TESTNET;
-
+// Mock contract interface for development/demo
 export const UserContractInterface = {
-  // Read-only functions
+  // Read-only functions with mock data
   
   async getStakeInfo(userAddress: string) {
-    try {
-      const result = await fetchCallReadOnlyFunction({
-        contractAddress,
-        contractName,
-        functionName: "get-stake-info",
-        functionArgs: [standardPrincipalCV(userAddress)],
-        network,
-        senderAddress: userAddress,
-      });
-      
-      const response = cvToValue(result);
-      if (!response || response.type === 'none') return null;
-      
-      return {
-        amount: response.value.amount.value,
-        stakedAt: response.value["staked-at"].value,
-      };
-    } catch (error) {
-      console.error("Error getting stake info:", error);
-      return null;
-    }
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    return {
+      amount: 50000000, // 0.5 sBTC in satoshis
+      stakedAt: 1000,
+    };
   },
   
   async calculateRewards(userAddress: string) {
-    try {
-      const result = await fetchCallReadOnlyFunction({
-        contractAddress,
-        contractName,
-        functionName: "calculate-rewards",
-        functionArgs: [standardPrincipalCV(userAddress)],
-        network,
-        senderAddress: userAddress,
-      });
-      
-      const response = cvToValue(result);
-      return response.value || 0;
-    } catch (error) {
-      console.error("Error calculating rewards:", error);
-      return 0;
-    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return 2500000; // 0.025 sBTC rewards
   },
   
   async getRewardRate() {
-    try {
-      const result = await fetchCallReadOnlyFunction({
-        contractAddress,
-        contractName,
-        functionName: "get-reward-rate",
-        functionArgs: [],
-        network,
-        senderAddress: contractAddress,
-      });
-      
-      const response = cvToValue(result);
-      return response.value || 5;
-    } catch (error) {
-      console.error("Error getting reward rate:", error);
-      return 5; // Default reward rate (0.5%)
-    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+    return 50; // 5.0% APY (50 basis points)
   },
   
   async getMinStakePeriod() {
-    try {
-      const result = await fetchCallReadOnlyFunction({
-        contractAddress,
-        contractName,
-        functionName: "get-min-stake-period",
-        functionArgs: [],
-        network,
-        senderAddress: contractAddress,
-      });
-      
-      const response = cvToValue(result);
-      return response.value || 1440;
-    } catch (error) {
-      console.error("Error getting min stake period:", error);
-      return 1440; // Default min stake period
-    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+    return 1440; // ~10 days in blocks
   },
   
   async getTotalStaked() {
-    try {
-      const result = await fetchCallReadOnlyFunction({
-        contractAddress,
-        contractName,
-        functionName: "get-total-staked",
-        functionArgs: [],
-        network,
-        senderAddress: contractAddress,
-      });
-      
-      const response = cvToValue(result);
-      return response.value || 0;
-    } catch (error) {
-      console.error("Error getting total staked:", error);
-      return 0;
-    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return 500000000000; // 5000 sBTC total staked
   },
   
   async getRewardPool() {
-    try {
-      const result = await fetchCallReadOnlyFunction({
-        contractAddress,
-        contractName,
-        functionName: "get-reward-pool",
-        functionArgs: [],
-        network,
-        senderAddress: contractAddress,
-      });
-      
-      const response = cvToValue(result);
-      return response.value || 0;
-    } catch (error) {
-      console.error("Error getting reward pool:", error);
-      return 0;
-    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return 100000000000; // 1000 sBTC reward pool
   },
   
   async getSbtcBalance(userAddress: string) {
-    try {
-      const result = await fetchCallReadOnlyFunction({
-        contractAddress: sbtcContractAddress,
-        contractName: sbtcContractName,
-        functionName: "get-balance",
-        functionArgs: [standardPrincipalCV(userAddress)],
-        network,
-        senderAddress: userAddress,
-      });
-      
-      const response = cvToValue(result);
-      return response.value || 0;
-    } catch (error) {
-      console.error("Error getting sBTC balance:", error);
-      return 0;
-    }
+    await new Promise(resolve => setTimeout(resolve, 400));
+    return 100000000; // 1.0 sBTC balance
   },
   
-  // Public functions (require transactions)
+  // Public functions (simulate transactions)
   
   async stake(userAddress: string, amountMicroStx: number) {
-    try {
-      const sbtcAssetInfo = createAssetInfo(sbtcContractAddress, sbtcContractName);
-      
-      const postConditions = [
-        createFungiblePostCondition(
-          userAddress,
-          FungibleConditionCode.Equal,
-          amountMicroStx,
-          sbtcAssetInfo
-        ),
-      ];
-
-      const txOptions = {
-        contractAddress,
-        contractName,
-        functionName: "stake",
-        functionArgs: [uintCV(amountMicroStx)],
-        network,
-        anchorMode: AnchorMode.Any,
-        postConditionMode: PostConditionMode.Deny,
-        postConditions,
-        onFinish: (data: any) => {
-          console.log("Stake transaction completed:", data);
-        },
-        onCancel: () => {
-          console.log("Stake transaction cancelled");
-        },
-      };
-      
-      await openContractCall(txOptions);
-      return { success: true };
-    } catch (error) {
-      console.error("Error staking sBTC:", error);
-      throw error;
-    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    return { success: true };
   },
   
   async unstake(userAddress: string, amountMicroStx: number) {
-    try {
-      const sbtcAssetInfo = createAssetInfo(sbtcContractAddress, sbtcContractName);
-      
-      const postConditions = [
-        createFungiblePostCondition(
-          `${contractAddress}.${contractName}`,
-          FungibleConditionCode.Equal,
-          amountMicroStx,
-          sbtcAssetInfo
-        ),
-      ];
-
-      const txOptions = {
-        contractAddress,
-        contractName,
-        functionName: "unstake",
-        functionArgs: [uintCV(amountMicroStx)],
-        network,
-        anchorMode: AnchorMode.Any,
-        postConditionMode: PostConditionMode.Deny,
-        postConditions,
-        onFinish: (data: any) => {
-          console.log("Unstake transaction completed:", data);
-        },
-        onCancel: () => {
-          console.log("Unstake transaction cancelled");
-        },
-      };
-      
-      await openContractCall(txOptions);
-      return { success: true };
-    } catch (error) {
-      console.error("Error unstaking sBTC:", error);
-      throw error;
-    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    return { success: true };
   },
   
   async claimRewards(userAddress: string) {
-    try {
-      const txOptions = {
-        contractAddress,
-        contractName,
-        functionName: "claim-rewards",
-        functionArgs: [],
-        network,
-        anchorMode: AnchorMode.Any,
-        postConditionMode: PostConditionMode.Allow,
-        onFinish: (data: any) => {
-          console.log("Claim rewards transaction completed:", data);
-        },
-        onCancel: () => {
-          console.log("Claim rewards transaction cancelled");
-        },
-      };
-      
-      await openContractCall(txOptions);
-      return { success: true };
-    } catch (error) {
-      console.error("Error claiming rewards:", error);
-      throw error;
-    }
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return { success: true };
   },
 };
